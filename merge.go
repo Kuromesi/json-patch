@@ -7,56 +7,18 @@ import (
 	"reflect"
 )
 
-func merge(cur, patch *lazyNode, mergeMerge bool) *lazyNode {
-	curDoc, err := cur.intoDoc()
-
-	if err != nil {
-		pruneNulls(patch)
-		return patch
-	}
-
-	patchDoc, err := patch.intoDoc()
-
-	if err != nil {
-		return patch
-	}
-
-	mergeDocs(curDoc, patchDoc, mergeMerge)
-
-	return cur
+type MergeOptions struct {
+	Path       string
+	MergeMerge bool
 }
 
-func mergeDocs(doc, patch *partialDoc, mergeMerge bool) {
-	for k, v := range *patch {
-		if v == nil {
-			if mergeMerge {
-				(*doc)[k] = nil
-			} else {
-				delete(*doc, k)
-			}
-		} else {
-			cur, ok := (*doc)[k]
-
-			if !ok || cur == nil {
-				if !mergeMerge {
-					pruneNulls(v)
-				}
-
-				(*doc)[k] = v
-			} else {
-				(*doc)[k] = merge(cur, v, mergeMerge)
-			}
-		}
-	}
-}
-
-func pruneNulls(n *lazyNode) {
-	sub, err := n.intoDoc()
+func PruneNulls(n *LazyNode) {
+	sub, err := n.IntoDoc()
 
 	if err == nil {
 		pruneDocNulls(sub)
 	} else {
-		ary, err := n.intoAry()
+		ary, err := n.IntoAry()
 
 		if err == nil {
 			pruneAryNulls(ary)
@@ -64,24 +26,24 @@ func pruneNulls(n *lazyNode) {
 	}
 }
 
-func pruneDocNulls(doc *partialDoc) *partialDoc {
+func pruneDocNulls(doc *PartialDoc) *PartialDoc {
 	for k, v := range *doc {
 		if v == nil {
 			delete(*doc, k)
 		} else {
-			pruneNulls(v)
+			PruneNulls(v)
 		}
 	}
 
 	return doc
 }
 
-func pruneAryNulls(ary *partialArray) *partialArray {
-	newAry := []*lazyNode{}
+func pruneAryNulls(ary *PartialArray) *PartialArray {
+	newAry := []*LazyNode{}
 
 	for _, v := range *ary {
 		if v != nil {
-			pruneNulls(v)
+			PruneNulls(v)
 		}
 		newAry = append(newAry, v)
 	}
@@ -98,21 +60,28 @@ var errBadMergeTypes = fmt.Errorf("Mismatched JSON Documents")
 // MergeMergePatches merges two merge patches together, such that
 // applying this resulting merged merge patch to a document yields the same
 // as merging each merge patch to the document in succession.
+// Deprecated: use MergePatch instead, and set MergeOptions.mergeMerge to be true
 func MergeMergePatches(patch1Data, patch2Data []byte) ([]byte, error) {
-	return doMergePatch(patch1Data, patch2Data, true)
+	opts := &MergeOptions{
+		MergeMerge: true,
+	}
+	return doMergePatch(patch1Data, patch2Data, opts)
 }
 
 // MergePatch merges the patchData into the docData.
-func MergePatch(docData, patchData []byte) ([]byte, error) {
-	return doMergePatch(docData, patchData, false)
+func MergePatch(docData, patchData []byte, opts *MergeOptions) ([]byte, error) {
+	if opts == nil {
+		opts = &MergeOptions{}
+	}
+	return doMergePatch(docData, patchData, opts)
 }
 
-func doMergePatch(docData, patchData []byte, mergeMerge bool) ([]byte, error) {
-	doc := &partialDoc{}
+func doMergePatch(docData, patchData []byte, opts *MergeOptions) ([]byte, error) {
+	doc := &LazyNode{}
 
 	docErr := json.Unmarshal(docData, doc)
 
-	patch := &partialDoc{}
+	patch := &LazyNode{}
 
 	patchErr := json.Unmarshal(patchData, patch)
 
@@ -124,43 +93,42 @@ func doMergePatch(docData, patchData []byte, mergeMerge bool) ([]byte, error) {
 		return nil, ErrBadJSONPatch
 	}
 
-	if docErr == nil && *doc == nil {
+	docIsDoc := doc.TryDoc()
+	patchIsDoc := patch.TryDoc()
+
+	docIsAry := doc.TryAry()
+	patchIsAry := patch.TryAry()
+
+	// does that exists?
+	if !docIsDoc && !docIsAry {
 		return nil, ErrBadJSONDoc
 	}
 
-	if patchErr == nil && *patch == nil {
+	if !patchIsDoc && !patchIsAry {
 		return nil, ErrBadJSONPatch
 	}
 
-	if docErr != nil || patchErr != nil {
-		// Not an error, just not a doc, so we turn straight into the patch
-		if patchErr == nil {
-			if mergeMerge {
-				doc = patch
-			} else {
-				doc = pruneDocNulls(patch)
-			}
-		} else {
-			patchAry := &partialArray{}
-			patchErr = json.Unmarshal(patchData, patchAry)
-
-			if patchErr != nil {
-				return nil, ErrBadJSONPatch
-			}
-
-			pruneAryNulls(patchAry)
-
-			out, patchErr := json.Marshal(patchAry)
-
-			if patchErr != nil {
-				return nil, ErrBadJSONPatch
-			}
-
-			return out, nil
-		}
-	} else {
-		mergeDocs(doc, patch, mergeMerge)
+	if docErr == nil && (docIsDoc && doc.doc == nil || docIsAry && doc.ary == nil) {
+		return nil, ErrBadJSONDoc
 	}
+
+	if patchErr == nil && (patchIsDoc && patch.doc == nil || patchIsAry && patch.ary == nil) {
+		return nil, ErrBadJSONPatch
+	}
+
+	if docIsDoc != patchIsDoc || docIsAry != patchIsAry {
+		if patchIsDoc {
+			if opts.MergeMerge {
+				return json.Marshal(&patch.doc)
+			}
+			return json.Marshal(pruneDocNulls(&patch.doc))
+		} else {
+			pruneAryNulls(&patch.ary)
+			return json.Marshal(&patch.ary)
+		}
+	}
+
+	GetMerger(opts.Path).Merge(doc, patch, opts)
 
 	return json.Marshal(doc)
 }

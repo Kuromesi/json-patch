@@ -7,7 +7,8 @@ import (
 )
 
 func mergePatch(doc, patch string) string {
-	out, err := MergePatch([]byte(doc), []byte(patch))
+	opts := &MergeOptions{MergeMerge: false}
+	out, err := MergePatch([]byte(doc), []byte(patch), opts)
 
 	if err != nil {
 		panic(err)
@@ -59,7 +60,7 @@ type arrayCases struct {
 
 func TestMergePatchNilArray(t *testing.T) {
 
-	cases := []arrayCases {
+	cases := []arrayCases{
 		{`{"a": [ {"b":"c"} ] }`, `{"a": [1]}`, `{"a": [1]}`},
 		{`{"a": [ {"b":"c"} ] }`, `{"a": [null, 1]}`, `{"a": [null, 1]}`},
 		{`["a",null]`, `[null]`, `[null]`},
@@ -120,13 +121,14 @@ func TestMergePatchReplacesNonObjectsWholesale(t *testing.T) {
 }
 
 func TestMergePatchReturnsErrorOnBadJSON(t *testing.T) {
-	_, err := MergePatch([]byte(`[[[[`), []byte(`1`))
+	opts := &MergeOptions{MergeMerge: false}
+	_, err := MergePatch([]byte(`[[[[`), []byte(`1`), opts)
 
 	if err == nil {
 		t.Errorf("Did not return an error for bad json: %s", err)
 	}
 
-	_, err = MergePatch([]byte(`1`), []byte(`[[[[`))
+	_, err = MergePatch([]byte(`1`), []byte(`[[[[`), opts)
 
 	if err == nil {
 		t.Errorf("Did not return an error for bad json: %s", err)
@@ -139,7 +141,8 @@ func TestMergePatchReturnsEmptyArrayOnEmptyArray(t *testing.T) {
 
 	exp := `{ "array": [] }`
 
-	res, err := MergePatch([]byte(doc), []byte(pat))
+	opts := &MergeOptions{MergeMerge: false}
+	res, err := MergePatch([]byte(doc), []byte(pat), opts)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %s, %s", err, string(res))
@@ -201,7 +204,8 @@ func TestMergePatchFailRFCCases(t *testing.T) {
 		doc := strings.TrimSpace(parts[0])
 		pat := strings.TrimSpace(parts[1])
 
-		out, err := MergePatch([]byte(doc), []byte(pat))
+		opts := &MergeOptions{MergeMerge: false}
+		out, err := MergePatch([]byte(doc), []byte(pat), opts)
 
 		if err != ErrBadJSONPatch {
 			t.Errorf("error not returned properly: %s, %s", err, string(out))
@@ -705,9 +709,9 @@ func TestMergeMergePatches(t *testing.T) {
 			exp:          `[]`,
 		},
 	}
-
+	opts := &MergeOptions{MergeMerge: true}
 	for _, c := range cases {
-		out, err := MergeMergePatches([]byte(c.p1), []byte(c.p2))
+		out, err := MergePatch([]byte(c.p1), []byte(c.p2), opts)
 
 		if err != nil {
 			panic(err)
@@ -721,3 +725,19 @@ func TestMergeMergePatches(t *testing.T) {
 		}
 	}
 }
+
+// func TestArrayMerger(t *testing.T) {
+// 	fakeMerger := func(a, b []interface{}) []interface{} {
+// 		return []interface{}{"fake"}
+// 	}
+// 	cases := []struct {
+// 		demonstrates string
+// 		a            string
+// 		b            string
+// 		exp          string
+// 	}{
+// 		{
+// 			demonstrates:"simple arrays are merged",
+// 		}
+// 	}
+// }

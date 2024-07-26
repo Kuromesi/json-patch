@@ -34,10 +34,10 @@ var (
 	ErrInvalidIndex = errors.New("invalid index referenced")
 )
 
-type lazyNode struct {
+type LazyNode struct {
 	raw   *json.RawMessage
-	doc   partialDoc
-	ary   partialArray
+	doc   PartialDoc
+	ary   PartialArray
 	which int
 }
 
@@ -47,21 +47,21 @@ type Operation map[string]*json.RawMessage
 // Patch is an ordered collection of Operations.
 type Patch []Operation
 
-type partialDoc map[string]*lazyNode
-type partialArray []*lazyNode
+type PartialDoc map[string]*LazyNode
+type PartialArray []*LazyNode
 
 type container interface {
-	get(key string) (*lazyNode, error)
-	set(key string, val *lazyNode) error
-	add(key string, val *lazyNode) error
+	get(key string) (*LazyNode, error)
+	set(key string, val *LazyNode) error
+	add(key string, val *LazyNode) error
 	remove(key string) error
 }
 
-func newLazyNode(raw *json.RawMessage) *lazyNode {
-	return &lazyNode{raw: raw, doc: nil, ary: nil, which: eRaw}
+func newLazyNode(raw *json.RawMessage) *LazyNode {
+	return &LazyNode{raw: raw, doc: nil, ary: nil, which: eRaw}
 }
 
-func (n *lazyNode) MarshalJSON() ([]byte, error) {
+func (n *LazyNode) MarshalJSON() ([]byte, error) {
 	switch n.which {
 	case eRaw:
 		return json.Marshal(n.raw)
@@ -74,7 +74,7 @@ func (n *lazyNode) MarshalJSON() ([]byte, error) {
 	}
 }
 
-func (n *lazyNode) UnmarshalJSON(data []byte) error {
+func (n *LazyNode) UnmarshalJSON(data []byte) error {
 	dest := make(json.RawMessage, len(data))
 	copy(dest, data)
 	n.raw = &dest
@@ -82,7 +82,7 @@ func (n *lazyNode) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func deepCopy(src *lazyNode) (*lazyNode, int, error) {
+func DeepCopy(src *LazyNode) (*LazyNode, int, error) {
 	if src == nil {
 		return nil, 0, nil
 	}
@@ -96,7 +96,7 @@ func deepCopy(src *lazyNode) (*lazyNode, int, error) {
 	return newLazyNode(&ra), sz, nil
 }
 
-func (n *lazyNode) intoDoc() (*partialDoc, error) {
+func (n *LazyNode) IntoDoc() (*PartialDoc, error) {
 	if n.which == eDoc {
 		return &n.doc, nil
 	}
@@ -115,7 +115,7 @@ func (n *lazyNode) intoDoc() (*partialDoc, error) {
 	return &n.doc, nil
 }
 
-func (n *lazyNode) intoAry() (*partialArray, error) {
+func (n *LazyNode) IntoAry() (*PartialArray, error) {
 	if n.which == eAry {
 		return &n.ary, nil
 	}
@@ -134,7 +134,7 @@ func (n *lazyNode) intoAry() (*partialArray, error) {
 	return &n.ary, nil
 }
 
-func (n *lazyNode) compact() []byte {
+func (n *LazyNode) compact() []byte {
 	buf := &bytes.Buffer{}
 
 	if n.raw == nil {
@@ -150,7 +150,7 @@ func (n *lazyNode) compact() []byte {
 	return buf.Bytes()
 }
 
-func (n *lazyNode) tryDoc() bool {
+func (n *LazyNode) TryDoc() bool {
 	if n.raw == nil {
 		return false
 	}
@@ -165,7 +165,7 @@ func (n *lazyNode) tryDoc() bool {
 	return true
 }
 
-func (n *lazyNode) tryAry() bool {
+func (n *LazyNode) TryAry() bool {
 	if n.raw == nil {
 		return false
 	}
@@ -180,9 +180,9 @@ func (n *lazyNode) tryAry() bool {
 	return true
 }
 
-func (n *lazyNode) equal(o *lazyNode) bool {
+func (n *LazyNode) equal(o *LazyNode) bool {
 	if n.which == eRaw {
-		if !n.tryDoc() && !n.tryAry() {
+		if !n.TryDoc() && !n.TryAry() {
 			if o.which != eRaw {
 				return false
 			}
@@ -193,7 +193,7 @@ func (n *lazyNode) equal(o *lazyNode) bool {
 
 	if n.which == eDoc {
 		if o.which == eRaw {
-			if !o.tryDoc() {
+			if !o.TryDoc() {
 				return false
 			}
 		}
@@ -229,7 +229,7 @@ func (n *lazyNode) equal(o *lazyNode) bool {
 		return true
 	}
 
-	if o.which != eAry && !o.tryAry() {
+	if o.which != eAry && !o.TryAry() {
 		return false
 	}
 
@@ -297,7 +297,7 @@ func (o Operation) From() (string, error) {
 	return "unknown", errors.Wrapf(ErrMissing, "operation, missing from field")
 }
 
-func (o Operation) value() *lazyNode {
+func (o Operation) value() *LazyNode {
 	if obj, ok := o["value"]; ok {
 		return newLazyNode(obj)
 	}
@@ -364,13 +364,13 @@ func findObject(pd *container, path string) (container, string) {
 		}
 
 		if isArray(*next.raw) {
-			doc, err = next.intoAry()
+			doc, err = next.IntoAry()
 
 			if err != nil {
 				return nil, ""
 			}
 		} else {
-			doc, err = next.intoDoc()
+			doc, err = next.IntoDoc()
 
 			if err != nil {
 				return nil, ""
@@ -381,21 +381,21 @@ func findObject(pd *container, path string) (container, string) {
 	return doc, decodePatchKey(key)
 }
 
-func (d *partialDoc) set(key string, val *lazyNode) error {
+func (d *PartialDoc) set(key string, val *LazyNode) error {
 	(*d)[key] = val
 	return nil
 }
 
-func (d *partialDoc) add(key string, val *lazyNode) error {
+func (d *PartialDoc) add(key string, val *LazyNode) error {
 	(*d)[key] = val
 	return nil
 }
 
-func (d *partialDoc) get(key string) (*lazyNode, error) {
+func (d *PartialDoc) get(key string) (*LazyNode, error) {
 	return (*d)[key], nil
 }
 
-func (d *partialDoc) remove(key string) error {
+func (d *PartialDoc) remove(key string) error {
 	_, ok := (*d)[key]
 	if !ok {
 		return errors.Wrapf(ErrMissing, "Unable to remove nonexistent key: %s", key)
@@ -407,7 +407,7 @@ func (d *partialDoc) remove(key string) error {
 
 // set should only be used to implement the "replace" operation, so "key" must
 // be an already existing index in "d".
-func (d *partialArray) set(key string, val *lazyNode) error {
+func (d *PartialArray) set(key string, val *LazyNode) error {
 	idx, err := strconv.Atoi(key)
 	if err != nil {
 		return err
@@ -427,7 +427,7 @@ func (d *partialArray) set(key string, val *lazyNode) error {
 	return nil
 }
 
-func (d *partialArray) add(key string, val *lazyNode) error {
+func (d *PartialArray) add(key string, val *LazyNode) error {
 	if key == "-" {
 		*d = append(*d, val)
 		return nil
@@ -440,7 +440,7 @@ func (d *partialArray) add(key string, val *lazyNode) error {
 
 	sz := len(*d) + 1
 
-	ary := make([]*lazyNode, sz)
+	ary := make([]*LazyNode, sz)
 
 	cur := *d
 
@@ -466,7 +466,7 @@ func (d *partialArray) add(key string, val *lazyNode) error {
 	return nil
 }
 
-func (d *partialArray) get(key string) (*lazyNode, error) {
+func (d *PartialArray) get(key string) (*LazyNode, error) {
 	idx, err := strconv.Atoi(key)
 
 	if err != nil {
@@ -490,7 +490,7 @@ func (d *partialArray) get(key string) (*lazyNode, error) {
 	return (*d)[idx], nil
 }
 
-func (d *partialArray) remove(key string) error {
+func (d *PartialArray) remove(key string) error {
 	idx, err := strconv.Atoi(key)
 	if err != nil {
 		return err
@@ -512,7 +512,7 @@ func (d *partialArray) remove(key string) error {
 		idx += len(cur)
 	}
 
-	ary := make([]*lazyNode, len(cur)-1)
+	ary := make([]*LazyNode, len(cur)-1)
 
 	copy(ary[0:idx], cur[0:idx])
 	copy(ary[idx:], cur[idx+1:])
@@ -572,8 +572,8 @@ func (p Patch) replace(doc *container, op Operation) error {
 		val := op.value()
 
 		if val.which == eRaw {
-			if !val.tryDoc() {
-				if !val.tryAry() {
+			if !val.TryDoc() {
+				if !val.TryAry() {
 					return errors.Wrapf(err, "replace operation value must be object or array")
 				}
 			}
@@ -658,13 +658,13 @@ func (p Patch) test(doc *container, op Operation) error {
 	}
 
 	if path == "" {
-		var self lazyNode
+		var self LazyNode
 
 		switch sv := (*doc).(type) {
-		case *partialDoc:
+		case *PartialDoc:
 			self.doc = *sv
 			self.which = eDoc
-		case *partialArray:
+		case *PartialArray:
 			self.ary = *sv
 			self.which = eAry
 		}
@@ -731,7 +731,7 @@ func (p Patch) copy(doc *container, op Operation, accumulatedCopySize *int64) er
 		return errors.Wrapf(ErrMissing, "copy operation does not apply: doc is missing destination path: %s", path)
 	}
 
-	valCopy, sz, err := deepCopy(val)
+	valCopy, sz, err := DeepCopy(val)
 	if err != nil {
 		return errors.Wrapf(err, "error while performing deep copy")
 	}
@@ -790,9 +790,9 @@ func (p Patch) ApplyIndent(doc []byte, indent string) ([]byte, error) {
 
 	var pd container
 	if doc[0] == '[' {
-		pd = &partialArray{}
+		pd = &PartialArray{}
 	} else {
-		pd = &partialDoc{}
+		pd = &PartialDoc{}
 	}
 
 	err := json.Unmarshal(doc, pd)

@@ -525,42 +525,42 @@ func TestAdd(t *testing.T) {
 	testCases := []struct {
 		name                   string
 		key                    string
-		val                    lazyNode
-		arr                    partialArray
+		val                    LazyNode
+		arr                    PartialArray
 		rejectNegativeIndicies bool
 		err                    string
 	}{
 		{
 			name: "should work",
 			key:  "0",
-			val:  lazyNode{},
-			arr:  partialArray{},
+			val:  LazyNode{},
+			arr:  PartialArray{},
 		},
 		{
 			name: "index too large",
 			key:  "1",
-			val:  lazyNode{},
-			arr:  partialArray{},
+			val:  LazyNode{},
+			arr:  PartialArray{},
 			err:  "Unable to access invalid index: 1: invalid index referenced",
 		},
 		{
 			name: "negative should work",
 			key:  "-1",
-			val:  lazyNode{},
-			arr:  partialArray{},
+			val:  LazyNode{},
+			arr:  PartialArray{},
 		},
 		{
 			name: "negative too small",
 			key:  "-2",
-			val:  lazyNode{},
-			arr:  partialArray{},
+			val:  LazyNode{},
+			arr:  PartialArray{},
 			err:  "Unable to access invalid index: -2: invalid index referenced",
 		},
 		{
 			name: "negative but negative disabled",
 			key:  "-1",
-			val:  lazyNode{},
-			arr:  partialArray{},
+			val:  LazyNode{},
+			arr:  PartialArray{},
 			err:  "Unable to access invalid index: -1: invalid index referenced",
 
 			rejectNegativeIndicies: true,
@@ -691,4 +691,19 @@ func TestEquality(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestJustTest(t *testing.T) {
+	doc := &LazyNode{}
+	dd := &PartialDoc{}
+
+	err := json.Unmarshal([]byte(`null`), doc)
+	test := doc.TryDoc()
+	fmt.Print(test)
+	fmt.Print(doc.doc == nil)
+	err = json.Unmarshal([]byte(`null`), dd)
+	fmt.Print(*dd == nil)
+	doc.TryDoc()
+	doc.TryAry()
+	fmt.Print(err)
 }
