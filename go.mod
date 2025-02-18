@@ -1,4 +1,4 @@
-module github.com/kuromesi/jsonpatch
+module github.com/kuromesi/json-patch
 
 go 1.22
 
