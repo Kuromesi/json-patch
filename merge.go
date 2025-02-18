@@ -7,26 +7,21 @@ import (
 	"reflect"
 )
 
-type MergeOptions struct {
-	Path       string
-	MergeMerge bool
-}
-
 func PruneNulls(n *LazyNode) {
 	sub, err := n.IntoDoc()
 
 	if err == nil {
-		pruneDocNulls(sub)
+		PruneDocNulls(sub)
 	} else {
 		ary, err := n.IntoAry()
 
 		if err == nil {
-			pruneAryNulls(ary)
+			PruneAryNulls(ary)
 		}
 	}
 }
 
-func pruneDocNulls(doc *PartialDoc) *PartialDoc {
+func PruneDocNulls(doc *PartialDoc) *PartialDoc {
 	for k, v := range *doc {
 		if v == nil {
 			delete(*doc, k)
@@ -38,7 +33,7 @@ func pruneDocNulls(doc *PartialDoc) *PartialDoc {
 	return doc
 }
 
-func pruneAryNulls(ary *PartialArray) *PartialArray {
+func PruneAryNulls(ary *PartialArray) *PartialArray {
 	newAry := []*LazyNode{}
 
 	for _, v := range *ary {
@@ -69,14 +64,21 @@ func MergeMergePatches(patch1Data, patch2Data []byte) ([]byte, error) {
 }
 
 // MergePatch merges the patchData into the docData.
-func MergePatch(docData, patchData []byte, opts *MergeOptions) ([]byte, error) {
-	if opts == nil {
-		opts = &MergeOptions{}
+func MergePatch(docData, patchData []byte, fns ...MergeOptionsFunc) ([]byte, error) {
+	opts := NewMergeOptions()
+	for _, fn := range fns {
+		fn(opts)
 	}
 	return doMergePatch(docData, patchData, opts)
 }
 
-func doMergePatch(docData, patchData []byte, opts *MergeOptions) ([]byte, error) {
+func doMergePatch(docData, patchData []byte, opts *MergeOptions) (merged []byte, retErr error) {
+	// in case custom mergers cause panics, we make a recover
+	defer func() {
+		if r := recover(); r != nil {
+			retErr = fmt.Errorf("panic: %v", r)
+		}
+	}()
 	doc := &LazyNode{}
 
 	docErr := json.Unmarshal(docData, doc)
@@ -99,37 +101,32 @@ func doMergePatch(docData, patchData []byte, opts *MergeOptions) ([]byte, error)
 	docIsAry := doc.TryAry()
 	patchIsAry := patch.TryAry()
 
-	// does that exists?
-	if !docIsDoc && !docIsAry {
+	// when the raw string is 'null', or is string type
+	if docErr == nil && (docIsDoc && doc.doc == nil || docIsAry && doc.ary == nil || !(docIsAry || docIsDoc)) {
 		return nil, ErrBadJSONDoc
 	}
 
-	if !patchIsDoc && !patchIsAry {
+	if patchErr == nil && (patchIsDoc && patch.doc == nil || patchIsAry && patch.ary == nil || !(patchIsAry || patchIsDoc)) {
 		return nil, ErrBadJSONPatch
 	}
 
-	if docErr == nil && (docIsDoc && doc.doc == nil || docIsAry && doc.ary == nil) {
-		return nil, ErrBadJSONDoc
-	}
-
-	if patchErr == nil && (patchIsDoc && patch.doc == nil || patchIsAry && patch.ary == nil) {
-		return nil, ErrBadJSONPatch
-	}
-
+	// when type is inconsistent, just replace
 	if docIsDoc != patchIsDoc || docIsAry != patchIsAry {
 		if patchIsDoc {
 			if opts.MergeMerge {
 				return json.Marshal(&patch.doc)
 			}
-			return json.Marshal(pruneDocNulls(&patch.doc))
+			return json.Marshal(PruneDocNulls(&patch.doc))
 		} else {
-			pruneAryNulls(&patch.ary)
+			PruneAryNulls(&patch.ary)
 			return json.Marshal(&patch.ary)
 		}
 	}
 
-	GetMerger(opts.Path).Merge(doc, patch, opts)
-
+	_, err := opts.Mergers.Get(opts.Path).Merge(doc, patch, opts)
+	if err != nil {
+		return nil, err
+	}
 	return json.Marshal(doc)
 }
 
@@ -235,7 +232,7 @@ func createArrayMergePatch(originalJSON, modifiedJSON []byte) ([]byte, error) {
 
 // Returns true if the array matches (must be json types).
 // As is idiomatic for go, an empty array is not the same as a nil array.
-func matchesArray(a, b []interface{}) bool {
+func MatchesArray(a, b []interface{}) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -243,7 +240,7 @@ func matchesArray(a, b []interface{}) bool {
 		return false
 	}
 	for i := range a {
-		if !matchesValue(a[i], b[i]) {
+		if !MatchesValue(a[i], b[i]) {
 			return false
 		}
 	}
@@ -253,7 +250,7 @@ func matchesArray(a, b []interface{}) bool {
 // Returns true if the values matches (must be json types)
 // The types of the values must match, otherwise it will always return false
 // If two map[string]interface{} are given, all elements must match.
-func matchesValue(av, bv interface{}) bool {
+func MatchesValue(av, bv interface{}) bool {
 	if reflect.TypeOf(av) != reflect.TypeOf(bv) {
 		return false
 	}
@@ -287,14 +284,14 @@ func matchesValue(av, bv interface{}) bool {
 			if aOK != bOK {
 				return false
 			}
-			if !matchesValue(av, bv) {
+			if !MatchesValue(av, bv) {
 				return false
 			}
 		}
 		return true
 	case []interface{}:
 		bt := bv.([]interface{})
-		return matchesArray(at, bt)
+		return MatchesArray(at, bt)
 	}
 	return false
 }
@@ -327,12 +324,12 @@ func getDiff(a, b map[string]interface{}) (map[string]interface{}, error) {
 				into[key] = dst
 			}
 		case string, float64, bool:
-			if !matchesValue(av, bv) {
+			if !MatchesValue(av, bv) {
 				into[key] = bv
 			}
 		case []interface{}:
 			bt := bv.([]interface{})
-			if !matchesArray(at, bt) {
+			if !MatchesArray(at, bt) {
 				into[key] = bv
 			}
 		case nil:

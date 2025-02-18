@@ -1,41 +1,172 @@
 package jsonpatch
 
-import "fmt"
+import (
+	"fmt"
+)
+
+type MergePolicy int
 
 const (
-	POLICY_REPLACE_WITH_PATCH = "replaceWithPatch"
+	// default policy, replace the original with the patch by fields
+	// replace when data type are inconsistent or is array, string, int and etc.
+	PolicyPatchAndReplace MergePolicy = iota
+
+	// when data type is array, patch them by index
+	PolicyArrayIndexPatch
+
+	// just replace
+	PolicyDirectReplace
 )
-
-var (
-	_MergersRegistry = &MergersRegistry{}
-	defaultPolicy    = POLICY_REPLACE_WITH_PATCH
-)
-
-func init() {
-	_MergersRegistry.Register(POLICY_REPLACE_WITH_PATCH, &replaceWithPatchMerger{})
-}
-
-type Indexer interface {
-	Index(node *LazyNode) (*LazyNode, error)
-	Store(node *LazyNode) error
-}
 
 type Merger interface {
-	Merge(cur, patch *LazyNode, opts *MergeOptions) *LazyNode
+	Merge(cur, patch *LazyNode, opts *MergeOptions) (*LazyNode, error)
 }
 
-type MergersRegistry struct {
-	registry map[string]Merger
+type MergersRegistry interface {
+	Get(key string) Merger
+	Register(key string, merger Merger) bool
 }
 
-func (r *MergersRegistry) Get(key string) Merger {
+func NewMerger(mergeFunc func(cur, patch *LazyNode, opts *MergeOptions) (*LazyNode, error)) Merger {
+	return &merger{
+		merge: mergeFunc,
+	}
+}
+
+type merger struct {
+	merge func(cur, patch *LazyNode, opts *MergeOptions) (*LazyNode, error)
+}
+
+func (m *merger) Merge(cur, patch *LazyNode, opts *MergeOptions) (*LazyNode, error) {
+	return m.merge(cur, patch, opts)
+}
+
+var (
+	patchAndReplaceMerger = &merger{
+		merge: func(cur, patch *LazyNode, opts *MergeOptions) (*LazyNode, error) {
+			curDoc, err := cur.IntoDoc()
+
+			// if cur node is not doc (array, nil, string, int etc.), then just replace it
+			if err != nil {
+				PruneNulls(patch)
+				return patch, nil
+			}
+			patchDoc, err := patch.IntoDoc()
+			// if patch node is not doc, then just replace it
+			// else, we merge it
+			if err != nil {
+				return patch, nil
+			}
+			for k, v := range *patchDoc {
+				if v == nil {
+					if opts.MergeMerge {
+						(*curDoc)[k] = nil
+					} else {
+						delete(*curDoc, k)
+					}
+				} else {
+					cur, ok := (*curDoc)[k]
+					// if the key doesn't exist in the current document, we just add it
+					// else, merge them recursively
+					if !ok || cur == nil {
+						if !opts.MergeMerge {
+							PruneNulls(v)
+						}
+
+						(*curDoc)[k] = v
+					} else {
+						pathCopy := opts.Path
+						opts.Path = AppendPath(opts.Path, k)
+						(*curDoc)[k], err = opts.Mergers.Get(opts.Path).Merge(cur, v, opts)
+						if err != nil {
+							return nil, err
+						}
+						opts.Path = pathCopy
+					}
+				}
+			}
+			return cur, nil
+		},
+	}
+
+	arrayIndexPatchMerger = &merger{
+		merge: func(cur, patch *LazyNode, opts *MergeOptions) (*LazyNode, error) {
+			curAry, curAryErr := cur.IntoAry()
+			patchAry, patchAryErr := patch.IntoAry()
+
+			if curAryErr != nil || patchAryErr != nil {
+				return nil, fmt.Errorf("invalid array")
+			}
+
+			if curAry == nil {
+				PruneAryNulls(patchAry)
+				return patch, nil
+			}
+
+			if patchAry == nil {
+				PruneAryNulls(curAry)
+				return cur, nil
+			}
+
+			for idx, patchElement := range *patchAry {
+				if idx >= len(*curAry) {
+					*curAry = append(*curAry, (*patchAry)[idx:len(*patchAry)]...)
+					break
+				}
+				pathCopy := opts.Path
+				opts.Path = AppendPath(opts.Path, "-")
+				_, err := opts.Mergers.Get(opts.Path).Merge((*curAry)[idx], patchElement, opts)
+				if err != nil {
+					return nil, err
+				}
+				opts.Path = pathCopy
+			}
+			PruneAryNulls(curAry)
+			return cur, nil
+		},
+	}
+
+	replaceMerger = &merger{
+		merge: func(cur, patch *LazyNode, opts *MergeOptions) (ret *LazyNode, retErr error) {
+			PruneNulls(patch)
+			return patch, nil
+		},
+	}
+)
+
+func DefaultMerger(policy MergePolicy) Merger {
+	switch policy {
+	case PolicyArrayIndexPatch:
+		return arrayIndexPatchMerger
+	case PolicyDirectReplace:
+		return replaceMerger
+	case PolicyPatchAndReplace:
+		return patchAndReplaceMerger
+	default:
+		return nil
+	}
+}
+
+func NewMergersRegistry() MergersRegistry {
+	return &mergersRegistry{
+		defaultMerger: DefaultMerger(PolicyPatchAndReplace),
+		registry:      make(map[string]Merger),
+	}
+}
+
+type mergersRegistry struct {
+	defaultMerger Merger
+	registry      map[string]Merger
+}
+
+func (r *mergersRegistry) Get(key string) Merger {
 	if merger, ok := r.registry[key]; ok {
 		return merger
 	}
-	return _MergersRegistry.Get(defaultPolicy)
+	return r.defaultMerger
 }
 
-func (r *MergersRegistry) Register(key string, merger Merger) bool {
+func (r *mergersRegistry) Register(key string, merger Merger) bool {
 	if r.registry == nil {
 		r.registry = make(map[string]Merger)
 	}
@@ -43,60 +174,6 @@ func (r *MergersRegistry) Register(key string, merger Merger) bool {
 	return true
 }
 
-func RegisterMerger(key string, merger Merger) bool {
-	return _MergersRegistry.Register(key, merger)
-}
-
-func GetMerger(key string) Merger {
-	return _MergersRegistry.Get(key)
-}
-
-func concatenate(a, b string) string {
-	return fmt.Sprintf("%s.%s", a, b)
-}
-
-type replaceWithPatchMerger struct{}
-
-func (m *replaceWithPatchMerger) Merge(cur, patch *LazyNode, opts *MergeOptions) *LazyNode {
-	curDoc, err := cur.IntoDoc()
-
-	// if cur node is not doc (array, nil, string, int etc.), then just replace it
-	if err != nil {
-		PruneNulls(patch)
-		return patch
-	}
-	patchDoc, err := patch.IntoDoc()
-	// if patch node is not doc, then just replace it
-	if err != nil {
-		return patch
-	}
-	// else, we merge it
-	for k, v := range *patchDoc {
-		if v == nil {
-			if opts.MergeMerge {
-				(*curDoc)[k] = nil
-			} else {
-				delete(*curDoc, k)
-			}
-		} else {
-			cur, ok := (*curDoc)[k]
-			// if the key doesn't exist in the current document, we just add it
-			// else, merge them recursively
-			if !ok || cur == nil {
-				if !opts.MergeMerge {
-					PruneNulls(v)
-				}
-
-				(*curDoc)[k] = v
-			} else {
-				mergeOpts := &MergeOptions{
-					MergeMerge: opts.MergeMerge,
-					Path:       concatenate(opts.Path, k),
-				}
-				(*curDoc)[k] = _MergersRegistry.Get(concatenate(opts.Path, k)).Merge(cur, v, mergeOpts)
-			}
-		}
-	}
-
-	return cur
+func AppendPath(a, b string) string {
+	return fmt.Sprintf("%s/%s", a, b)
 }

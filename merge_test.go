@@ -7,8 +7,7 @@ import (
 )
 
 func mergePatch(doc, patch string) string {
-	opts := &MergeOptions{MergeMerge: false}
-	out, err := MergePatch([]byte(doc), []byte(patch), opts)
+	out, err := MergePatch([]byte(doc), []byte(patch))
 
 	if err != nil {
 		panic(err)
@@ -121,14 +120,13 @@ func TestMergePatchReplacesNonObjectsWholesale(t *testing.T) {
 }
 
 func TestMergePatchReturnsErrorOnBadJSON(t *testing.T) {
-	opts := &MergeOptions{MergeMerge: false}
-	_, err := MergePatch([]byte(`[[[[`), []byte(`1`), opts)
+	_, err := MergePatch([]byte(`[[[[`), []byte(`1`))
 
 	if err == nil {
 		t.Errorf("Did not return an error for bad json: %s", err)
 	}
 
-	_, err = MergePatch([]byte(`1`), []byte(`[[[[`), opts)
+	_, err = MergePatch([]byte(`1`), []byte(`[[[[`))
 
 	if err == nil {
 		t.Errorf("Did not return an error for bad json: %s", err)
@@ -141,8 +139,7 @@ func TestMergePatchReturnsEmptyArrayOnEmptyArray(t *testing.T) {
 
 	exp := `{ "array": [] }`
 
-	opts := &MergeOptions{MergeMerge: false}
-	res, err := MergePatch([]byte(doc), []byte(pat), opts)
+	res, err := MergePatch([]byte(doc), []byte(pat))
 
 	if err != nil {
 		t.Errorf("Unexpected error: %s, %s", err, string(res))
@@ -204,8 +201,7 @@ func TestMergePatchFailRFCCases(t *testing.T) {
 		doc := strings.TrimSpace(parts[0])
 		pat := strings.TrimSpace(parts[1])
 
-		opts := &MergeOptions{MergeMerge: false}
-		out, err := MergePatch([]byte(doc), []byte(pat), opts)
+		out, err := MergePatch([]byte(doc), []byte(pat))
 
 		if err != ErrBadJSONPatch {
 			t.Errorf("error not returned properly: %s, %s", err, string(out))
@@ -550,7 +546,7 @@ func TestMatchesValue(t *testing.T) {
 	}
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := matchesValue(tc.a, tc.b)
+			got := MatchesValue(tc.a, tc.b)
 			if got != tc.want {
 				t.Fatalf("want %v, got %v", tc.want, got)
 			}
@@ -565,7 +561,7 @@ func benchmarkMatchesValueWithDeeplyNestedFields(depth int, b *testing.B) {
 	b.ResetTimer()
 	b.Run(fmt.Sprintf("objectCount=%v", objCount), func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			if !matchesValue(a, a) {
+			if !MatchesValue(a, a) {
 				b.Errorf("Should be equal")
 			}
 		}
@@ -709,9 +705,8 @@ func TestMergeMergePatches(t *testing.T) {
 			exp:          `[]`,
 		},
 	}
-	opts := &MergeOptions{MergeMerge: true}
 	for _, c := range cases {
-		out, err := MergePatch([]byte(c.p1), []byte(c.p2), opts)
+		out, err := MergePatch([]byte(c.p1), []byte(c.p2), WithMergeMerge)
 
 		if err != nil {
 			panic(err)
@@ -726,18 +721,24 @@ func TestMergeMergePatches(t *testing.T) {
 	}
 }
 
-// func TestArrayMerger(t *testing.T) {
-// 	fakeMerger := func(a, b []interface{}) []interface{} {
-// 		return []interface{}{"fake"}
-// 	}
-// 	cases := []struct {
-// 		demonstrates string
-// 		a            string
-// 		b            string
-// 		exp          string
-// 	}{
-// 		{
-// 			demonstrates:"simple arrays are merged",
-// 		}
-// 	}
-// }
+func TestArrayMerger(t *testing.T) {
+	// _ := func(a, b []interface{}) []interface{} {
+	// 	return []interface{}{"fake"}
+	// }
+	// _ := []struct {
+	// 	demonstrates string
+	// 	a            string
+	// 	b            string
+	// 	exp          string
+	// }{
+	// 	{
+	// 		demonstrates: "simple arrays are merged",
+	// 	},
+	// }
+	test := []byte("null")
+	cur := &LazyNode{}
+	cur.UnmarshalJSON(test)
+	isArray := cur.TryAry()
+	isDoc := cur.TryDoc()
+	fmt.Println(isArray, isDoc)
+}

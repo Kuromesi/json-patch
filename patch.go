@@ -96,6 +96,17 @@ func DeepCopy(src *LazyNode) (*LazyNode, int, error) {
 	return newLazyNode(&ra), sz, nil
 }
 
+func (n *LazyNode) IntoString() string {
+	if n == nil {
+		return ""
+	}
+	return string(*n.raw)
+}
+
+func (n *LazyNode) IntoRaw() *json.RawMessage {
+	return n.raw
+}
+
 func (n *LazyNode) IntoDoc() (*PartialDoc, error) {
 	if n.which == eDoc {
 		return &n.doc, nil
@@ -134,7 +145,7 @@ func (n *LazyNode) IntoAry() (*PartialArray, error) {
 	return &n.ary, nil
 }
 
-func (n *LazyNode) compact() []byte {
+func (n *LazyNode) Compact() []byte {
 	buf := &bytes.Buffer{}
 
 	if n.raw == nil {
@@ -187,7 +198,7 @@ func (n *LazyNode) equal(o *LazyNode) bool {
 				return false
 			}
 
-			return bytes.Equal(n.compact(), o.compact())
+			return bytes.Equal(n.Compact(), o.Compact())
 		}
 	}
 
